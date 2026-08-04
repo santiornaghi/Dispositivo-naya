@@ -1,0 +1,14 @@
+Piezas encontradas: ['El Rossinyol', 'Locus Iste', 'Nino Dios']
+  El Rossinyol: 22 segmentos de 6.0s
+  Locus Iste: 31 segmentos de 6.0s
+  Nino Dios: 17 segmentos de 6.0s
+Total segmentos de entrenamiento: 70
+época 1/8: loss=0.2804 (71.0s, 18 batches)
+época 2/8: loss=0.2460 (71.9s, 18 batches)
+época 3/8: loss=0.2296 (76.2s, 18 batches)
+época 4/8: loss=0.2295 (69.2s, 18 batches)
+época 5/8: loss=0.2227 (68.7s, 18 batches)
+época 6/8: loss=0.2172 (69.8s, 18 batches)
+época 7/8: loss=0.2051 (70.8s, 18 batches)
+época 8/8: loss=0.2050 (70.2s, 18 batches)
+Checkpoint guardado en modelo_entrenado\satb.pt

@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 
 VOCES = ["soprano", "alto", "tenor", "bajo"]
+SR = 48000  # sample rate nativo del Choral Singing Dataset
 N_FFT = 1024
 HOP = 256
 

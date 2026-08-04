@@ -12,7 +12,6 @@ ejemplos de entrenamiento con pocas piezas, y para que quepa en memoria en CPU.
 from __future__ import annotations
 
 import argparse
-import re
 import time
 from pathlib import Path
 
@@ -20,28 +19,36 @@ import soundfile as sf
 import torch
 import torch.nn.functional as F
 
-from model import SeparadorSATB, VOCES, espectrograma, N_FFT, HOP
+from model import SeparadorSATB, VOCES, espectrograma, SR, N_FFT, HOP
 
-SR = 44100
 SEGMENTO_SEG = 6.0
 SEGMENTO_MUESTRAS = int(SR * SEGMENTO_SEG)
 
-# nombres de archivo típicos: algo con S/A/T/B (mayúscula, seguida de un
-# número de cantante) en algún punto del nombre, ej "..._S1.wav", "..._A2.wav"
-PATRON_VOZ = re.compile(r"(?:^|[_\-])([SATB])\d*(?:[_\-.]|$)", re.IGNORECASE)
-MAPA_VOZ = {"S": "soprano", "A": "alto", "T": "tenor", "B": "bajo"}
+# nombres reales del Choral Singing Dataset, ej. "rossinyol_Soprano_108.wav",
+# "locus_ContraAlt_101.wav", "nino_Bajos_104.wav", "rossinyol_Tenor1-09.wav"
+# (palabras en español/catalán, no códigos de una letra — nombres de archivo
+# reales verificados tras extraer el dataset, no una convención estándar)
+PALABRAS_VOZ = {
+    "soprano": "soprano",
+    "contraalt": "alto",
+    "tenor": "tenor",
+    "bajo": "bajo",  # cubre "Bajos"
+}
 
 
 def detectar_voz(nombre_archivo: str) -> str | None:
-    m = PATRON_VOZ.search(nombre_archivo)
-    if not m:
-        return None
-    return MAPA_VOZ[m.group(1).upper()]
+    minusc = nombre_archivo.lower()
+    for palabra, voz in PALABRAS_VOZ.items():
+        if palabra in minusc:
+            return voz
+    return None
 
 
 def cargar_pieza(carpeta: Path) -> dict[str, torch.Tensor] | None:
     """Devuelve {'soprano': tensor, 'alto': ..., ...} sumando las pistas de cada voz."""
-    archivos = list(carpeta.glob("*.wav")) + list(carpeta.glob("*.WAV"))
+    # los audios viven en una subcarpeta ("Individual voices" en el Choral
+    # Singing Dataset), por eso busca recursivo, no solo en `carpeta` directo
+    archivos = list(carpeta.rglob("*.wav")) + list(carpeta.rglob("*.WAV"))
     por_voz: dict[str, list[torch.Tensor]] = {v: [] for v in VOCES}
     for archivo in archivos:
         voz = detectar_voz(archivo.stem)
