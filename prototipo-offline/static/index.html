@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Modo Volumen — prototipo</title>
 <style>
   :root { color-scheme: light dark; }
@@ -19,11 +20,16 @@
   label { display: block; margin: 0.4rem 0 0.15rem; font-size: 0.85rem; }
   select, input[type=text] { padding: 0.4rem; width: 100%; box-sizing: border-box; }
   button {
-    padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #8884;
+    padding: 0.7rem 1.2rem; border-radius: 6px; border: 1px solid #8884;
     cursor: pointer; background: #6c63ff; color: white; font-weight: 600;
+    font-size: 1rem; min-height: 44px; /* touch target */
   }
   button:disabled { opacity: 0.4; cursor: default; }
   button.secundario { background: transparent; color: inherit; }
+  button.grabando { background: #e53e3e; }
+  .estado-grabacion { font-size: 0.9rem; margin: 0.6rem 0; }
+  details { margin-top: 0.8rem; font-size: 0.85rem; }
+  summary { cursor: pointer; color: #6c63ff; }
   .mensaje { background: #6c63ff22; border-radius: 6px; padding: 0.6rem 0.8rem; font-size: 0.9rem; margin: 0.6rem 0; }
   .categoria { margin-bottom: 1rem; }
   .categoria-header { display: flex; justify-content: space-between; font-size: 0.85rem; }
@@ -43,23 +49,31 @@
 <body>
   <h1>Modo Volumen — prototipo</h1>
   <div class="subtitulo">
-    Mezcla en vivo por categoría. Los tracks corales (Rowan, Stamford) ya usan
-    las voces reales del modelo fine-tuneado (soprano/alto/tenor/bajo). Los
-    demás todavía muestran los 4 stems genéricos de Demucs
-    (bass/drums/other/vocals) hasta que haya fine-tuning instrumental.
+    Grabá un fragmento y el modelo lo separa en voces reales
+    (soprano/alto/tenor/bajo) — no es una lista de tracks de ejemplo, es tu
+    propio audio.
   </div>
 
   <fieldset>
-    <legend>1. Elegí un track y un perfil</legend>
-    <label for="track">Track (ya separado)</label>
-    <select id="track"></select>
+    <legend>1. Grabá y cargá un perfil</legend>
 
     <label for="perfil">Nombre del perfil (coro, lugar, grupo de ensayo)</label>
     <input type="text" id="perfil" placeholder="ej. Coro San Martín">
 
     <div class="fila-controles">
-      <button id="btnCargar">Cargar perfil</button>
+      <button id="btnGrabar">🎙 Grabar</button>
+      <button id="btnDetener" class="secundario" disabled>■ Detener</button>
     </div>
+    <div id="estadoGrabacion" class="estado-grabacion"></div>
+
+    <details>
+      <summary>o probar con un track de ejemplo ya separado</summary>
+      <label for="track">Track</label>
+      <select id="track"></select>
+      <div class="fila-controles">
+        <button id="btnCargar" class="secundario">Cargar ejemplo</button>
+      </div>
+    </details>
   </fieldset>
 
   <div id="mensaje" class="mensaje" style="display:none"></div>
@@ -147,11 +161,7 @@ function renderSliders() {
   }
 }
 
-$('btnCargar').addEventListener('click', async () => {
-  const track = $('track').value;
-  const perfil = $('perfil').value.trim();
-  if (!track || !perfil) { alert('Elegí un track y escribí un nombre de perfil.'); return; }
-
+async function cargarPerfilParaTrack(track, perfil) {
   trackActual = track;
   perfilActual = perfil;
 
@@ -171,6 +181,13 @@ $('btnCargar').addEventListener('click', async () => {
 
   // pre-cargar el audio para que "Reproducir" arranque sin demora
   await precargarAudio(track, Object.keys(ajustesActuales));
+}
+
+$('btnCargar').addEventListener('click', async () => {
+  const track = $('track').value;
+  const perfil = $('perfil').value.trim();
+  if (!track || !perfil) { alert('Elegí un track y escribí un nombre de perfil.'); return; }
+  await cargarPerfilParaTrack(track, perfil);
 });
 
 async function precargarAudio(track, categorias) {
@@ -228,6 +245,128 @@ $('btnRestaurarToast').addEventListener('click', async () => {
   }
   ocultarToast();
 });
+
+// --- grabación de mic + encoding WAV en el navegador ---
+// Se usa ScriptProcessorNode (no MediaRecorder) a propósito: MediaRecorder no
+// tiene soporte confiable de WAV/PCM en todos los navegadores (Safari iOS
+// especialmente), y acá conviene mandar WAV directo — el servidor lo lee con
+// soundfile sin depender de ffmpeg (que no está instalado en esta máquina).
+let micStream = null;
+let micCtx = null;
+let micProcessor = null;
+let chunksGrabados = [];
+let segundosGrabados = 0;
+let timerGrabacion = null;
+
+function codificarWAV(muestras, sampleRate) {
+  const buffer = new ArrayBuffer(44 + muestras.length * 2);
+  const view = new DataView(buffer);
+  const escribirStr = (offset, str) => { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); };
+  escribirStr(0, 'RIFF');
+  view.setUint32(4, 36 + muestras.length * 2, true);
+  escribirStr(8, 'WAVE');
+  escribirStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  escribirStr(36, 'data');
+  view.setUint32(40, muestras.length * 2, true);
+  let offset = 44;
+  for (let i = 0; i < muestras.length; i++, offset += 2) {
+    const s = Math.max(-1, Math.min(1, muestras[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([view], { type: 'audio/wav' });
+}
+
+async function empezarGrabacion() {
+  micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  micCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const fuente = micCtx.createMediaStreamSource(micStream);
+  micProcessor = micCtx.createScriptProcessor(4096, 1, 1);
+  chunksGrabados = [];
+
+  micProcessor.onaudioprocess = (e) => {
+    chunksGrabados.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+  };
+  // conectar a un gain en 0 -> mantiene vivo el processor sin retorno audible del mic
+  const gainMudo = micCtx.createGain();
+  gainMudo.gain.value = 0;
+  fuente.connect(micProcessor);
+  micProcessor.connect(gainMudo);
+  gainMudo.connect(micCtx.destination);
+
+  segundosGrabados = 0;
+  $('estadoGrabacion').textContent = 'Grabando... 0s (recomendado: hasta 30s, más tarda más en procesar)';
+  timerGrabacion = setInterval(() => {
+    segundosGrabados++;
+    $('estadoGrabacion').textContent = `Grabando... ${segundosGrabados}s (recomendado: hasta 30s)`;
+  }, 1000);
+
+  $('btnGrabar').disabled = true;
+  $('btnGrabar').classList.add('grabando');
+  $('btnDetener').disabled = false;
+}
+
+async function detenerYSubirGrabacion() {
+  clearInterval(timerGrabacion);
+  micProcessor.disconnect();
+  micStream.getTracks().forEach(t => t.stop());
+  const sampleRate = micCtx.sampleRate;
+  const ctxCerrado = micCtx.close();
+
+  $('btnGrabar').disabled = false;
+  $('btnGrabar').classList.remove('grabando');
+  $('btnDetener').disabled = true;
+
+  const largoTotal = chunksGrabados.reduce((acc, c) => acc + c.length, 0);
+  const muestras = new Float32Array(largoTotal);
+  let pos = 0;
+  for (const c of chunksGrabados) { muestras.set(c, pos); pos += c.length; }
+
+  const wavBlob = codificarWAV(muestras, sampleRate);
+
+  $('estadoGrabacion').textContent = 'Subiendo grabación...';
+  const form = new FormData();
+  form.append('audio', wavBlob, 'grabacion.wav');
+  const res = await fetch('/api/grabaciones', { method: 'POST', body: form });
+  const data = await res.json();
+
+  $('estadoGrabacion').textContent = 'Separando tu audio en voces (soprano/alto/tenor/bajo)... puede tardar unos minutos.';
+  await esperarSeparacion(data.id);
+}
+
+async function esperarSeparacion(idGrabacion) {
+  while (true) {
+    await new Promise(r => setTimeout(r, 3000));
+    const res = await fetch(`/api/grabaciones/${encodeURIComponent(idGrabacion)}/estado`);
+    const data = await res.json();
+    if (data.estado === 'listo') {
+      $('estadoGrabacion').textContent = 'Separación lista.';
+      const perfil = $('perfil').value.trim() || 'Sin nombre';
+      await cargarPerfilParaTrack(idGrabacion, perfil);
+      return;
+    }
+    if (data.estado === 'error') {
+      $('estadoGrabacion').textContent = 'Hubo un error separando el audio — mirá flask.log en el servidor.';
+      return;
+    }
+  }
+}
+
+$('btnGrabar').addEventListener('click', async () => {
+  try {
+    await empezarGrabacion();
+  } catch (err) {
+    $('estadoGrabacion').textContent = `No se pudo acceder al micrófono: ${err.message}`;
+  }
+});
+
+$('btnDetener').addEventListener('click', detenerYSubirGrabacion);
 
 cargarTracks();
 </script>

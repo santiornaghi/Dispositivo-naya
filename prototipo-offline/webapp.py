@@ -18,6 +18,9 @@ son las categorías de verdad del proyecto para coro, no un placeholder.
 """
 from __future__ import annotations
 
+import subprocess
+import threading
+import time
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -25,11 +28,18 @@ from flask import Flask, jsonify, request, send_from_directory
 from perfiles import PerfilManager
 
 STEMS_DIR = Path(__file__).parent.parent / "demucs-fase0" / "output" / "htdemucs"
-SATB_DIR = Path(__file__).parent.parent / "fine-tuning-satb" / "separaciones"
+FINE_TUNING_DIR = Path(__file__).parent.parent / "fine-tuning-satb"
+SATB_DIR = FINE_TUNING_DIR / "separaciones"
+GRABACIONES_DIR = Path(__file__).parent / "grabaciones"
 PERFILES_DIR = Path(__file__).parent / "perfiles_data"
+VENV_PYTHON = Path(__file__).parent.parent / "demucs-fase0" / ".venv" / "Scripts" / "python.exe"
+CHECKPOINT_SATB = FINE_TUNING_DIR / "modelo_entrenado" / "satb_v2.pt"
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 manager = PerfilManager(PERFILES_DIR)
+
+_estado_grabaciones: dict[str, str] = {}  # id -> "procesando" | "listo" | "error"
+_estado_lock = threading.Lock()
 
 
 def _resolver_track(track: str) -> tuple[Path, str] | tuple[None, None]:
@@ -130,5 +140,54 @@ def restaurar(nombre: str):
     })
 
 
+def _separar_en_background(id_grabacion: str, ruta_wav: Path) -> None:
+    resultado = subprocess.run(
+        [str(VENV_PYTHON), "infer.py",
+         "--checkpoint", str(CHECKPOINT_SATB),
+         "--audio", str(ruta_wav),
+         "--out", str(SATB_DIR / id_grabacion)],
+        cwd=str(FINE_TUNING_DIR),
+        capture_output=True, text=True,
+    )
+    with _estado_lock:
+        if resultado.returncode == 0:
+            _estado_grabaciones[id_grabacion] = "listo"
+        else:
+            _estado_grabaciones[id_grabacion] = "error"
+            print(f"[error separando {id_grabacion}]\n{resultado.stderr}")
+
+
+@app.post("/api/grabaciones")
+def subir_grabacion():
+    archivo = request.files.get("audio")
+    if archivo is None:
+        return jsonify({"error": "falta el archivo 'audio'"}), 400
+
+    GRABACIONES_DIR.mkdir(parents=True, exist_ok=True)
+    id_grabacion = f"grabacion_{int(time.time())}"
+    ruta_wav = GRABACIONES_DIR / f"{id_grabacion}.wav"
+    archivo.save(ruta_wav)
+
+    with _estado_lock:
+        _estado_grabaciones[id_grabacion] = "procesando"
+
+    hilo = threading.Thread(target=_separar_en_background, args=(id_grabacion, ruta_wav), daemon=True)
+    hilo.start()
+
+    return jsonify({"id": id_grabacion, "estado": "procesando"})
+
+
+@app.get("/api/grabaciones/<id_grabacion>/estado")
+def estado_grabacion(id_grabacion: str):
+    with _estado_lock:
+        estado = _estado_grabaciones.get(id_grabacion, "desconocido")
+    return jsonify({"id": id_grabacion, "estado": estado})
+
+
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    # host=0.0.0.0 + ssl para que sea alcanzable (y el mic del celular funcione,
+    # getUserMedia exige contexto seguro) desde otro dispositivo en la misma red.
+    # debug=False a propósito: el debugger interactivo de Flask permite ejecutar
+    # código arbitrario si alguien más en la red lo alcanza — no vale la pena
+    # exponerlo aunque sea una red doméstica.
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True, ssl_context="adhoc")
