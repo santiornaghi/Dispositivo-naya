@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import julius
 import soundfile as sf
 import torch
 
@@ -22,8 +23,9 @@ def separar(checkpoint: Path, audio_path: Path, out_dir: Path):
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
     if sr != SR:
-        raise ValueError(f"este modelo espera {SR}Hz, el archivo tiene {sr}Hz "
-                          f"(resamplear antes de separar)")
+        print(f"  resampleando {sr}Hz -> {SR}Hz")
+        audio_t = torch.from_numpy(audio).unsqueeze(0)
+        audio = julius.resample_frac(audio_t, sr, SR).squeeze(0).numpy()
 
     modelo = SeparadorSATB(canales_base=16)
     modelo.load_state_dict(torch.load(checkpoint, map_location="cpu"))

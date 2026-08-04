@@ -9,7 +9,12 @@ Uso:
     python webapp.py
     -> abrir http://127.0.0.1:5000
 
-Requiere que ya exista output de Demucs en STEMS_DIR (ver demucs-fase0).
+Requiere que ya exista output de Demucs en STEMS_DIR (ver demucs-fase0), y/o
+separaciones SATB reales en SATB_DIR (ver fine-tuning-satb/infer.py).
+
+Si un track tiene separación SATB real (soprano/alto/tenor/bajo), la app usa
+esa por sobre los 4 stems genéricos de Demucs (bass/drums/other/vocals) —
+son las categorías de verdad del proyecto para coro, no un placeholder.
 """
 from __future__ import annotations
 
@@ -20,15 +25,29 @@ from flask import Flask, jsonify, request, send_from_directory
 from perfiles import PerfilManager
 
 STEMS_DIR = Path(__file__).parent.parent / "demucs-fase0" / "output" / "htdemucs"
+SATB_DIR = Path(__file__).parent.parent / "fine-tuning-satb" / "separaciones"
 PERFILES_DIR = Path(__file__).parent / "perfiles_data"
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 manager = PerfilManager(PERFILES_DIR)
 
 
+def _resolver_track(track: str) -> tuple[Path, str] | tuple[None, None]:
+    """Devuelve (carpeta, extension) priorizando SATB real sobre stems genéricos."""
+    carpeta_satb = SATB_DIR / track
+    if carpeta_satb.exists():
+        return carpeta_satb, "wav"
+    carpeta_generica = STEMS_DIR / track
+    if carpeta_generica.exists():
+        return carpeta_generica, "mp3"
+    return None, None
+
+
 def _categorias_de(track: str) -> list[str]:
-    carpeta = STEMS_DIR / track
-    return sorted(p.stem for p in carpeta.glob("*.mp3"))
+    carpeta, ext = _resolver_track(track)
+    if carpeta is None:
+        return []
+    return sorted(p.stem for p in carpeta.glob(f"*.{ext}"))
 
 
 @app.get("/")
@@ -38,26 +57,28 @@ def index():
 
 @app.get("/api/tracks")
 def listar_tracks():
-    if not STEMS_DIR.exists():
-        return jsonify([])
-    tracks = sorted(p.name for p in STEMS_DIR.iterdir() if p.is_dir())
-    return jsonify(tracks)
+    tracks = set()
+    if SATB_DIR.exists():
+        tracks.update(p.name for p in SATB_DIR.iterdir() if p.is_dir())
+    if STEMS_DIR.exists():
+        tracks.update(p.name for p in STEMS_DIR.iterdir() if p.is_dir())
+    return jsonify(sorted(tracks))
 
 
 @app.get("/api/tracks/<track>/categorias")
 def categorias_del_track(track: str):
-    carpeta = STEMS_DIR / track
-    if not carpeta.exists():
+    carpeta, _ = _resolver_track(track)
+    if carpeta is None:
         return jsonify({"error": f"no existe el track '{track}'"}), 404
     return jsonify(_categorias_de(track))
 
 
 @app.get("/api/audio/<track>/<categoria>")
 def audio_stem(track: str, categoria: str):
-    carpeta = STEMS_DIR / track
-    if not carpeta.exists() or not (carpeta / f"{categoria}.mp3").exists():
+    carpeta, ext = _resolver_track(track)
+    if carpeta is None or not (carpeta / f"{categoria}.{ext}").exists():
         return jsonify({"error": "stem no encontrado"}), 404
-    return send_from_directory(carpeta, f"{categoria}.mp3")
+    return send_from_directory(carpeta, f"{categoria}.{ext}")
 
 
 @app.get("/api/perfil/<nombre>")
