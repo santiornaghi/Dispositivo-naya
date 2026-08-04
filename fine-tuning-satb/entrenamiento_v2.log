@@ -1,0 +1,31 @@
+Piezas encontradas: ['El Rossinyol', 'Locus Iste', 'Nino Dios']
+  El Rossinyol: 44 segmentos de 6.0s
+  Locus Iste: 62 segmentos de 6.0s
+  Nino Dios: 33 segmentos de 6.0s
+Total segmentos de entrenamiento: 139
+época 1/25: loss=0.2378 (138.2s, 35 batches)
+época 2/25: loss=0.2092 (140.3s, 35 batches)
+época 3/25: loss=0.1988 (131.9s, 35 batches)
+época 4/25: loss=0.1926 (131.2s, 35 batches)
+época 5/25: loss=0.1850 (128.5s, 35 batches)
+época 6/25: loss=0.1824 (130.8s, 35 batches)
+época 7/25: loss=0.1761 (131.1s, 35 batches)
+época 8/25: loss=0.1692 (131.2s, 35 batches)
+época 9/25: loss=0.1667 (130.7s, 35 batches)
+época 10/25: loss=0.1636 (131.2s, 35 batches)
+época 11/25: loss=0.1611 (131.7s, 35 batches)
+época 12/25: loss=0.1576 (131.1s, 35 batches)
+época 13/25: loss=0.1588 (130.7s, 35 batches)
+época 14/25: loss=0.1556 (131.1s, 35 batches)
+época 15/25: loss=0.1505 (131.5s, 35 batches)
+época 16/25: loss=0.1500 (104.7s, 35 batches)
+época 17/25: loss=0.1482 (130.7s, 35 batches)
+época 18/25: loss=0.1460 (130.7s, 35 batches)
+época 19/25: loss=0.1441 (131.5s, 35 batches)
+época 20/25: loss=0.1419 (130.6s, 35 batches)
+época 21/25: loss=0.1394 (131.1s, 35 batches)
+época 22/25: loss=0.1378 (131.7s, 35 batches)
+época 23/25: loss=0.1362 (130.6s, 35 batches)
+época 24/25: loss=0.1381 (131.0s, 35 batches)
+época 25/25: loss=0.1375 (130.3s, 35 batches)
+Checkpoint guardado en modelo_entrenado\satb_v2.pt

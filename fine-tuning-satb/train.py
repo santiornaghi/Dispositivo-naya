@@ -71,13 +71,23 @@ def cargar_pieza(carpeta: Path) -> dict[str, torch.Tensor] | None:
     return sumas
 
 
-def segmentar(sumas_por_voz: dict[str, torch.Tensor]) -> list[dict[str, torch.Tensor]]:
+def segmentar(sumas_por_voz: dict[str, torch.Tensor], solape: float = 0.5) -> list[dict[str, torch.Tensor]]:
+    """
+    solape=0.5 -> los segmentos se solapan a la mitad (el doble de ejemplos
+    que sin solape, de los mismos 3 audios). Es un aumento de datos barato:
+    no inventa audio nuevo, pero le da al modelo más "vistas" ligeramente
+    distintas de las mismas piezas, algo así como el uso típico de solape en
+    entrenamiento de modelos de audio (evita que las fronteras de segmento
+    caigan siempre en el mismo lugar en cada época).
+    """
     largo = next(iter(sumas_por_voz.values())).shape[0]
-    n_segmentos = largo // SEGMENTO_MUESTRAS
+    paso = max(1, int(SEGMENTO_MUESTRAS * (1 - solape)))
     segmentos = []
-    for i in range(n_segmentos):
-        ini, fin = i * SEGMENTO_MUESTRAS, (i + 1) * SEGMENTO_MUESTRAS
+    ini = 0
+    while ini + SEGMENTO_MUESTRAS <= largo:
+        fin = ini + SEGMENTO_MUESTRAS
         segmentos.append({voz: audio[ini:fin] for voz, audio in sumas_por_voz.items()})
+        ini += paso
     return segmentos
 
 
