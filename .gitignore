@@ -1,0 +1,22 @@
+# entornos virtuales (se recrean con pip install, no se versionan)
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# audio generado o de prueba (pesado, binario, regenerable con los scripts)
+*.wav
+*.mp3
+*.flac
+demucs-fase0/output/
+prototipo-offline/salidas/
+fine-tuning-satb/dataset/
+fine-tuning-satb/modelo_entrenado/
+
+# datos de sesión / logs locales
+prototipo-offline/perfiles_data/
+prototipo-offline/flask.log
+
+# checkpoints de modelos entrenados (pesados, regenerables con train.py)
+*.pt
+*.pth

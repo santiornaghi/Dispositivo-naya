@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Modo Volumen — prototipo</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: system-ui, sans-serif;
+    max-width: 640px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    line-height: 1.4;
+  }
+  h1 { font-size: 1.3rem; margin-bottom: 0.2rem; }
+  .subtitulo { color: #888; font-size: 0.9rem; margin-bottom: 1.5rem; }
+  fieldset { border: 1px solid #8884; border-radius: 8px; margin-bottom: 1rem; padding: 1rem; }
+  legend { font-weight: 600; padding: 0 0.4rem; }
+  label { display: block; margin: 0.4rem 0 0.15rem; font-size: 0.85rem; }
+  select, input[type=text] { padding: 0.4rem; width: 100%; box-sizing: border-box; }
+  button {
+    padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #8884;
+    cursor: pointer; background: #6c63ff; color: white; font-weight: 600;
+  }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.secundario { background: transparent; color: inherit; }
+  .mensaje { background: #6c63ff22; border-radius: 6px; padding: 0.6rem 0.8rem; font-size: 0.9rem; margin: 0.6rem 0; }
+  .categoria { margin-bottom: 1rem; }
+  .categoria-header { display: flex; justify-content: space-between; font-size: 0.85rem; }
+  .categoria-nombre { font-weight: 600; }
+  input[type=range] { width: 100%; }
+  .aviso-nuevo { color: #d69e2e; font-size: 0.8rem; }
+  .toast {
+    position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
+    background: #222; color: white; padding: 0.6rem 1rem; border-radius: 8px;
+    font-size: 0.85rem; display: none; align-items: center; gap: 0.6rem;
+  }
+  .toast.visible { display: flex; }
+  .toast button { padding: 0.3rem 0.7rem; font-size: 0.8rem; }
+  .fila-controles { display: flex; gap: 0.6rem; margin-top: 0.8rem; }
+</style>
+</head>
+<body>
+  <h1>Modo Volumen — prototipo</h1>
+  <div class="subtitulo">
+    Mezcla en vivo por categoría. Las categorías hoy son los 4 stems genéricos
+    de Demucs (bass/drums/other/vocals) — no las categorías finales del
+    proyecto, eso llega con el fine-tuning.
+  </div>
+
+  <fieldset>
+    <legend>1. Elegí un track y un perfil</legend>
+    <label for="track">Track (ya separado)</label>
+    <select id="track"></select>
+
+    <label for="perfil">Nombre del perfil (coro, lugar, grupo de ensayo)</label>
+    <input type="text" id="perfil" placeholder="ej. Coro San Martín">
+
+    <div class="fila-controles">
+      <button id="btnCargar">Cargar perfil</button>
+    </div>
+  </fieldset>
+
+  <div id="mensaje" class="mensaje" style="display:none"></div>
+
+  <fieldset id="fieldsetCategorias" style="display:none">
+    <legend>2. Mezclá</legend>
+    <div id="categorias"></div>
+    <div class="fila-controles">
+      <button id="btnPlay">▶ Reproducir</button>
+      <button id="btnStop" class="secundario" disabled>■ Parar</button>
+    </div>
+  </fieldset>
+
+  <div id="toast" class="toast">
+    <span>Cambio grande — ¿restaurar el ajuste anterior?</span>
+    <button id="btnRestaurarToast">Restaurar</button>
+  </div>
+
+<script>
+const dbToLinear = db => Math.pow(10, db / 20);
+
+let audioCtx = null;
+let buffers = {};       // categoria -> AudioBuffer
+let gainNodes = {};     // categoria -> GainNode
+let sources = [];       // BufferSourceNode activos
+let trackActual = null;
+let perfilActual = null;
+let ajustesActuales = {};
+let toastTimeout = null;
+
+const $ = id => document.getElementById(id);
+
+async function cargarTracks() {
+  const res = await fetch('/api/tracks');
+  const tracks = await res.json();
+  const sel = $('track');
+  sel.innerHTML = tracks.map(t => `<option value="${t}">${t}</option>`).join('');
+}
+
+function ocultarToast() {
+  $('toast').classList.remove('visible');
+  clearTimeout(toastTimeout);
+}
+
+function mostrarToastCambioGrande() {
+  $('toast').classList.add('visible');
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(ocultarToast, 6000);
+}
+
+function renderSliders() {
+  const cont = $('categorias');
+  cont.innerHTML = '';
+  for (const [categoria, db] of Object.entries(ajustesActuales)) {
+    const div = document.createElement('div');
+    div.className = 'categoria';
+    div.innerHTML = `
+      <div class="categoria-header">
+        <span class="categoria-nombre">${categoria}</span>
+        <span id="valor-${categoria}">${db.toFixed(1)} dB</span>
+      </div>
+      <input type="range" id="slider-${categoria}" min="-24" max="6" step="0.5" value="${db}">
+    `;
+    cont.appendChild(div);
+
+    const slider = div.querySelector('input');
+    slider.addEventListener('input', () => {
+      const val = parseFloat(slider.value);
+      $(`valor-${categoria}`).textContent = `${val.toFixed(1)} dB`;
+      if (gainNodes[categoria] && audioCtx) {
+        gainNodes[categoria].gain.setValueAtTime(dbToLinear(val), audioCtx.currentTime);
+      }
+    });
+    slider.addEventListener('change', async () => {
+      const val = parseFloat(slider.value);
+      const res = await fetch(`/api/perfil/${encodeURIComponent(perfilActual)}/ajuste`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ categoria, valor_db: val }),
+      });
+      const data = await res.json();
+      ajustesActuales = data.ajustes_db;
+      if (data.cambio_grande) mostrarToastCambioGrande();
+    });
+  }
+}
+
+$('btnCargar').addEventListener('click', async () => {
+  const track = $('track').value;
+  const perfil = $('perfil').value.trim();
+  if (!track || !perfil) { alert('Elegí un track y escribí un nombre de perfil.'); return; }
+
+  trackActual = track;
+  perfilActual = perfil;
+
+  const res = await fetch(`/api/perfil/${encodeURIComponent(perfil)}?track=${encodeURIComponent(track)}`);
+  const data = await res.json();
+
+  ajustesActuales = data.ajustes_db;
+  $('mensaje').style.display = 'block';
+  let html = data.mensaje;
+  if (data.categorias_nuevas.length) {
+    html += `<div class="aviso-nuevo">Categorías nuevas en este track: ${data.categorias_nuevas.join(', ')} (entran en 0dB hasta que las ajustes)</div>`;
+  }
+  $('mensaje').innerHTML = html;
+
+  renderSliders();
+  $('fieldsetCategorias').style.display = 'block';
+
+  // pre-cargar el audio para que "Reproducir" arranque sin demora
+  await precargarAudio(track, Object.keys(ajustesActuales));
+});
+
+async function precargarAudio(track, categorias) {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  buffers = {};
+  gainNodes = {};
+  for (const categoria of categorias) {
+    const res = await fetch(`/api/audio/${encodeURIComponent(track)}/${encodeURIComponent(categoria)}`);
+    const arrayBuffer = await res.arrayBuffer();
+    buffers[categoria] = await audioCtx.decodeAudioData(arrayBuffer);
+    const gain = audioCtx.createGain();
+    gain.gain.value = dbToLinear(ajustesActuales[categoria] ?? 0);
+    gain.connect(audioCtx.destination);
+    gainNodes[categoria] = gain;
+  }
+}
+
+function pararReproduccion() {
+  sources.forEach(s => { try { s.stop(); } catch (e) {} });
+  sources = [];
+  $('btnPlay').disabled = false;
+  $('btnStop').disabled = true;
+}
+
+$('btnPlay').addEventListener('click', () => {
+  if (!Object.keys(buffers).length) { alert('Cargá un perfil primero.'); return; }
+  pararReproduccion();
+  const inicio = audioCtx.currentTime + 0.1;
+  for (const [categoria, buffer] of Object.entries(buffers)) {
+    const src = audioCtx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(gainNodes[categoria]);
+    src.start(inicio);
+    src.onended = () => {
+      sources = sources.filter(s => s !== src);
+      if (sources.length === 0) { $('btnPlay').disabled = false; $('btnStop').disabled = true; }
+    };
+    sources.push(src);
+  }
+  $('btnPlay').disabled = true;
+  $('btnStop').disabled = false;
+});
+
+$('btnStop').addEventListener('click', pararReproduccion);
+
+$('btnRestaurarToast').addEventListener('click', async () => {
+  const res = await fetch(`/api/perfil/${encodeURIComponent(perfilActual)}/restaurar`, { method: 'POST' });
+  const data = await res.json();
+  if (data.restaurado) {
+    ajustesActuales = data.ajustes_db;
+    renderSliders();
+    for (const [categoria, db] of Object.entries(ajustesActuales)) {
+      if (gainNodes[categoria]) gainNodes[categoria].gain.setValueAtTime(dbToLinear(db), audioCtx.currentTime);
+    }
+  }
+  ocultarToast();
+});
+
+cargarTracks();
+</script>
+</body>
+</html>

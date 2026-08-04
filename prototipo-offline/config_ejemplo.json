@@ -1,0 +1,7 @@
+{
+  "bass": { "modo": "volumen", "valor_db": -6 },
+  "drums": { "modo": "volumen", "valor_db": -6 },
+  "other": { "modo": "db", "techo_db": -12, "attack_ms": 3, "release_ms": 100 },
+  "vocals": { "modo": "volumen", "valor_db": 0 },
+  "master": { "techo_db": -6, "attack_ms": 3, "release_ms": 100 }
+}
